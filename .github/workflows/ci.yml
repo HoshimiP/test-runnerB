@@ -11,9 +11,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
       - name: Boot QEMU via PXE
         run: |
+          set -e
           test -f "${GITHUB_WORKSPACE}/rootfs.img"
+          touch qemu.log
           sudo qemu-system-x86_64 \
             -boot n \
             -m 128M \
@@ -21,8 +24,35 @@ jobs:
             -machine q35 \
             -cpu host \
             -enable-kvm \
-            -netdev tap,id=mynet0,ifname=tap-runner-pxe,script=no,downscript=no \
-            -device e1000,netdev=mynet0 \
+            -netdev tap,id=mynet0,ifname=tap-runner-pxe,script=no,downscript=no,vhost=off,queues=2 \
+            -device virtio-net-pci,netdev=mynet0,mac=52:54:00:12:34:56 \
             -device virtio-blk-pci,drive=disk0 \
             -drive id=disk0,if=none,format=raw,file="${GITHUB_WORKSPACE}/rootfs.img" \
-            -nographic
+            -nographic \
+            -no-reboot \
+            >> qemu.log 2>&1 &
+          QEMU_PID=$!
+
+          echo "Monitoring QEMU output..."
+
+          tail -f qemu.log &
+          TAIL_PID=$!
+
+          if grep -m1 -q "usertests passed!" <(tail -f qemu.log); then
+            echo "Detected success pattern 'usertests passed!', terminating QEMU."
+            sudo kill $QEMU_PID || true
+            kill $TAIL_PID || true
+            exit 0
+          fi
+
+          if grep -m1 -q "System will reboot, press any key to continue ..." <(tail -f qemu.log); then
+            echo "Detected failure pattern, terminating QEMU."
+            sudo kill $QEMU_PID || true
+            kill $TAIL_PID || true
+            exit 1
+          fi
+
+          echo "No success or failure pattern detected."
+          sudo kill $QEMU_PID || true
+          kill $TAIL_PID || true
+          exit 1
