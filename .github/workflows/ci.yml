@@ -1,0 +1,28 @@
+name: PXE QEMU TestB
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  pxe_test:
+    runs-on: [self-hosted, linux, pxe-qemu]
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Boot QEMU via PXE
+        run: |
+          test -f "${GITHUB_WORKSPACE}/rootfs.img"
+          sudo qemu-system-x86_64 \
+            -boot n \
+            -m 128M \
+            -smp 1 \
+            -machine q35 \
+            -cpu host \
+            -enable-kvm \
+            -netdev tap,id=mynet0,ifname=tap-runner-pxe,script=no,downscript=no \
+            -device e1000,netdev=mynet0 \
+            -device virtio-blk-pci,drive=disk0 \
+            -drive id=disk0,if=none,format=raw,file="${GITHUB_WORKSPACE}/rootfs.img" \
+            -nographic
